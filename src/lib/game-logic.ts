@@ -29,12 +29,12 @@ export function getNumberColor(n: number): 'green' | 'red' | 'black' {
  */
 export function computeWheelSpin(result: number, currentRotationDeg: number): number {
   const idx = WHEEL_ORDER.indexOf(result);
-  const sectorAngle = idx * SLOT_DEG;
-  // After rotating by X, sector is at (sectorAngle + currentRotation + X) mod 360.
-  // We want that = 0, so X = (360 - (sectorAngle + currentRotation) % 360) % 360
+  // Use the CENTER of the sector so the ball lands in the middle of the pocket,
+  // not at the edge. The number label is also drawn at (idx + 0.5) * SLOT_DEG.
+  const sectorAngle = (idx + 0.5) * SLOT_DEG;
   const base = (360 - (sectorAngle + currentRotationDeg) % 360) % 360;
   const fullRotations = (5 + Math.floor(Math.random() * 3)) * 360;
-  return fullRotations + (base === 0 ? 360 : base); // at least one partial rotation
+  return fullRotations + (base === 0 ? 360 : base);
 }
 
 /** Degrees the ball orbits (counter-clockwise = negative) for the spin duration. */

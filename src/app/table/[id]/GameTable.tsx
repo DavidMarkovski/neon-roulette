@@ -169,26 +169,34 @@ export default function GameTable({ tableId }: { tableId: string }) {
     });
     channelRef.current = channel;
 
+    // Read the full presence state and update the players list.
+    // Called on every presence event (sync, join, leave) so no changes are missed.
+    function updatePlayersFromPresence() {
+      const state = channel.presenceState<PresenceEntry>();
+      const raw = Object.values(state).flat();
+      const map = new Map<string, PresenceEntry>();
+      for (const e of raw) map.set(e.playerId, e);
+      const unique = [...map.values()].sort((a, b) => a.playerId.localeCompare(b.playerId));
+      setPlayers(unique.map((e, i) => ({
+        id: e.playerId,
+        name: e.playerName,
+        color: e.color,
+        balance: e.balance,
+        bets: e.bets,
+        isHost: i === 0,
+        confirmed: e.confirmed,
+      })));
+    }
+
     channel
-      .on('presence', { event: 'sync' }, () => {
-        const state = channel.presenceState<PresenceEntry>();
-        const raw = Object.values(state).flat();
-
-        // Deduplicate by playerId (take latest entry per player)
-        const map = new Map<string, PresenceEntry>();
-        for (const e of raw) map.set(e.playerId, e);
-        const unique = [...map.values()].sort((a, b) => a.playerId.localeCompare(b.playerId));
-
-        setPlayers(unique.map((e, i) => ({
-          id: e.playerId,
-          name: e.playerName,
-          color: e.color,
-          balance: e.balance,
-          bets: e.bets,
-          isHost: i === 0,
-          confirmed: e.confirmed,
-        })));
+      .on('presence', { event: 'sync' }, updatePlayersFromPresence)
+      .on('presence', { event: 'join' }, () => {
+        updatePlayersFromPresence();
+        // Re-track our own state so the newly joined player receives our presence
+        // in the next sync event they get (fixes the one-way visibility bug).
+        syncPresence();
       })
+      .on('presence', { event: 'leave' }, updatePlayersFromPresence)
       .on('broadcast', { event: 'spin_result' }, ({ payload }: { payload: { result: number } }) => {
         handleSpinBroadcast(payload.result);
       })
@@ -324,7 +332,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
         >
           <div className="text-center">
             <h1 className="text-lg font-black tracking-widest uppercase neon-text">
-              David&apos;s Galactic<br />Casino of Ruin
+              David&apos;s Galactic<br />Casino of Fortune
             </h1>
             <p className="text-[10px] mt-1 tracking-widest" style={{ color: 'rgba(0,212,255,0.4)' }}>
               Enter the table
@@ -365,7 +373,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
         </button>
 
         <h1 className="text-sm sm:text-base font-black tracking-widest uppercase neon-text text-center flex-1 px-2">
-          David&apos;s Galactic Casino of Ruin
+          David&apos;s Galactic Casino of Fortune
         </h1>
 
         <button
