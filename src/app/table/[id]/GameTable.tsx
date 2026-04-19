@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { v4 as uuid } from 'uuid';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseReady } from '@/lib/supabase';
 import {
   PLAYER_COLORS, randomResult, calculatePayout, totalBetAmount,
 } from '@/lib/game-logic';
@@ -184,6 +184,18 @@ export default function GameTable({ tableId }: { tableId: string }) {
   const shareUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/table/${tableId}`
     : '';
+
+  if (!supabaseReady) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center min-h-screen gap-4 text-center px-4">
+        <p className="text-2xl font-bold tracking-widest" style={{ color: '#ef4444' }}>⚠ Supabase Not Configured</p>
+        <p className="text-sm text-purple-400 max-w-sm">
+          Add <code className="text-purple-200">NEXT_PUBLIC_SUPABASE_URL</code> and{' '}
+          <code className="text-purple-200">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to your Vercel environment variables, then redeploy.
+        </p>
+      </div>
+    );
+  }
 
   if (!joined) {
     return (
