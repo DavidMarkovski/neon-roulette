@@ -256,8 +256,14 @@ export default function GameTable({ tableId }: { tableId: string }) {
   }
 
   function handleSpinComplete(spinResult: number) {
-    const won  = calculatePayout(betsRef.current, spinResult);
-    const lost = totalBetAmount(betsRef.current);
+    // Snapshot and immediately clear bets to prevent any double-fire from applying
+    // the payout twice (e.g. if the animation callback somehow fires more than once).
+    const currentBets = betsRef.current;
+    betsRef.current = [];
+    setBets([]);
+
+    const won  = calculatePayout(currentBets, spinResult);
+    const lost = totalBetAmount(currentBets);
     const newBal = balanceRef.current - lost + won;
     setBalance(newBal);
     balanceRef.current = newBal;
@@ -265,6 +271,11 @@ export default function GameTable({ tableId }: { tableId: string }) {
     setHistory(h => [spinResult, ...h].slice(0, 20));
     setPhase('result');
     phaseRef.current = 'result';
+    // Update the players list immediately so PlayerPanel reflects the new balance
+    // without waiting for presence sync to round-trip.
+    setPlayers(prev => prev.map(p =>
+      p.id === playerIdRef.current ? { ...p, balance: newBal, bets: [], confirmed: false } : p
+    ));
     syncPresence({ balance: newBal, bets: [], confirmed: false });
   }
 

@@ -45,16 +45,20 @@ interface Props {
 export default function RouletteWheel({ result, isSpinning, onSpinComplete }: Props) {
   const wheelControls = useAnimation();
   const ballControls  = useAnimation();
-  const wheelRot = useRef(0);   // cumulative clockwise rotation of wheel
-  const ballRot  = useRef(0);   // cumulative rotation of ball group
+  const wheelRot = useRef(0);
+  const ballRot  = useRef(0);
   const fired    = useRef(false);
+  // Keep a stable ref so the animation effect doesn't re-run when the parent
+  // re-renders (countdown ticks, presence updates) and creates a new function reference.
+  const onSpinCompleteRef = useRef(onSpinComplete);
+  useEffect(() => { onSpinCompleteRef.current = onSpinComplete; });
 
   useEffect(() => {
     if (!isSpinning || result === null) return;
     fired.current = false;
 
     const wheelDelta = computeWheelSpin(result, wheelRot.current);
-    const ballDelta  = computeBallSpin(); // always a multiple of -360, ends at top
+    const ballDelta  = computeBallSpin();
 
     wheelRot.current += wheelDelta;
     ballRot.current  += ballDelta;
@@ -67,10 +71,12 @@ export default function RouletteWheel({ result, isSpinning, onSpinComplete }: Pr
     ]).then(() => {
       if (!fired.current) {
         fired.current = true;
-        onSpinComplete(result);
+        onSpinCompleteRef.current(result);
       }
     });
-  }, [isSpinning, result, wheelControls, ballControls, onSpinComplete]);
+  // onSpinComplete intentionally excluded — we use the ref above
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSpinning, result, wheelControls, ballControls]);
 
   const resultColor = result !== null ? getNumberColor(result) : null;
 
