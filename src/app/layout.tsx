@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Neon Roulette',
-  description: 'Futuristic multiplayer roulette',
+  title: "David's Galactic Casino of Doom",
+  description: 'No Refunds. No Mercy. No Gravity.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

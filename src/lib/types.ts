@@ -19,24 +19,7 @@ export interface Player {
   bets: Bet[];
   isHost: boolean;
   color: string;
+  confirmed: boolean;
 }
 
 export type GamePhase = 'betting' | 'spinning' | 'result';
-
-export interface GameState {
-  phase: GamePhase;
-  result: number | null;
-  history: number[];
-}
-
-export interface RealtimePayload {
-  type:
-    | 'player_join'
-    | 'player_leave'
-    | 'bet_update'
-    | 'spin_start'
-    | 'spin_result'
-    | 'round_new';
-  playerId: string;
-  data?: unknown;
-}

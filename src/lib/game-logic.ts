@@ -13,25 +13,33 @@ export const RED_NUMBERS = new Set([
 export const CHIP_DENOMINATIONS = [10, 50, 100, 500, 1000];
 
 export const PLAYER_COLORS = [
-  '#a855f7', '#3b82f6', '#ec4899', '#f59e0b', '#10b981',
+  '#00d4ff', '#f59e0b', '#ec4899', '#10b981', '#a855f7',
 ];
+
+export const SLOT_DEG = 360 / 37;
 
 export function getNumberColor(n: number): 'green' | 'red' | 'black' {
   if (n === 0) return 'green';
   return RED_NUMBERS.has(n) ? 'red' : 'black';
 }
 
-export function getWheelAngle(result: number): number {
+/**
+ * Returns degrees the wheel must rotate (clockwise, cumulative) so that the
+ * result pocket lands at 12 o'clock, accounting for where the wheel currently is.
+ */
+export function computeWheelSpin(result: number, currentRotationDeg: number): number {
   const idx = WHEEL_ORDER.indexOf(result);
-  const slotDeg = 360 / 37;
-  return idx * slotDeg;
+  const sectorAngle = idx * SLOT_DEG;
+  // After rotating by X, sector is at (sectorAngle + currentRotation + X) mod 360.
+  // We want that = 0, so X = (360 - (sectorAngle + currentRotation) % 360) % 360
+  const base = (360 - (sectorAngle + currentRotationDeg) % 360) % 360;
+  const fullRotations = (5 + Math.floor(Math.random() * 3)) * 360;
+  return fullRotations + (base === 0 ? 360 : base); // at least one partial rotation
 }
 
-export function spinWheelDegrees(result: number): number {
-  const target = getWheelAngle(result);
-  // 5-8 full rotations plus the target offset
-  const fullRotations = (5 + Math.floor(Math.random() * 3)) * 360;
-  return fullRotations + target;
+/** Degrees the ball orbits (counter-clockwise = negative) for the spin duration. */
+export function computeBallSpin(): number {
+  return -((4 + Math.floor(Math.random() * 3)) * 360);
 }
 
 export function randomResult(): number {
@@ -51,18 +59,18 @@ export function betWins(bet: Bet, result: number): boolean {
   const color = getNumberColor(result);
   switch (bet.type) {
     case 'straight': return bet.number === result;
-    case 'red': return color === 'red';
-    case 'black': return color === 'black';
-    case 'odd': return result !== 0 && result % 2 !== 0;
-    case 'even': return result !== 0 && result % 2 === 0;
-    case 'low': return result >= 1 && result <= 18;
-    case 'high': return result >= 19 && result <= 36;
-    case 'dozen1': return result >= 1 && result <= 12;
+    case 'red':    return color === 'red';
+    case 'black':  return color === 'black';
+    case 'odd':    return result !== 0 && result % 2 !== 0;
+    case 'even':   return result !== 0 && result % 2 === 0;
+    case 'low':    return result >= 1 && result <= 18;
+    case 'high':   return result >= 19 && result <= 36;
+    case 'dozen1': return result >= 1  && result <= 12;
     case 'dozen2': return result >= 13 && result <= 24;
     case 'dozen3': return result >= 25 && result <= 36;
-    case 'col1': return result !== 0 && result % 3 === 1;
-    case 'col2': return result !== 0 && result % 3 === 2;
-    case 'col3': return result !== 0 && result % 3 === 0;
+    case 'col1':   return result !== 0 && result % 3 === 1;
+    case 'col2':   return result !== 0 && result % 3 === 2;
+    case 'col3':   return result !== 0 && result % 3 === 0;
     default: return false;
   }
 }
