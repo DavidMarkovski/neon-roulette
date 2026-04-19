@@ -38,7 +38,7 @@ export default function Lobby() {
           className="text-xl sm:text-3xl font-black tracking-widest uppercase"
           style={{ color: '#ec4899', textShadow: '0 0 20px #ec4899' }}
         >
-          OF DOOM
+          OF RUIN
         </h3>
         <p className="text-xs tracking-widest pt-2" style={{ color: 'rgba(0,212,255,0.4)' }}>
           No Refunds &nbsp;·&nbsp; No Mercy &nbsp;·&nbsp; No Gravity

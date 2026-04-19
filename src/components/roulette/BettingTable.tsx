@@ -44,18 +44,23 @@ function Zone({
           ? 'rgba(127,29,29,0.7)'
           : 'rgba(4,15,34,0.85)',
         borderColor: 'rgba(0,212,255,0.15)',
-        fontFamily: 'Courier New, monospace',
       }}
       onClick={() => !disabled && onBet({ type, number, amount: selectedChip })}
     >
-      <span style={{ color: green ? '#10b981' : red ? '#f87171' : '#e0f2fe', fontSize: 11 }}>
+      <span style={{
+        color: green ? '#10b981' : red ? '#f87171' : '#e0f2fe',
+        fontSize: type === 'straight' ? 13 : 11,
+        fontFamily: type === 'straight' ? 'Courier New, monospace' : undefined,
+        fontWeight: 700,
+        letterSpacing: type === 'straight' ? undefined : '0.04em',
+      }}>
         {label}
       </span>
 
       {/* My chip stack */}
       {amount > 0 && (
         <span
-          className="absolute top-0.5 right-0.5 text-[9px] font-black px-1 rounded-sm"
+          className="absolute top-0.5 right-0.5 text-[10px] font-black px-1 rounded-sm"
           style={{ background: 'var(--neon)', color: '#020b18' }}
         >
           {amount >= 1000 ? `${amount / 1000}k` : `$${amount}`}

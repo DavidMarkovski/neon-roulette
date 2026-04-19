@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: "David's Galactic Casino of Doom",
+  title: "David's Galactic Casino of Ruin",
   description: 'No Refunds. No Mercy. No Gravity.',
 };
 

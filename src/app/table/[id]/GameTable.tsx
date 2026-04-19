@@ -30,7 +30,7 @@ function HotNumbers({ history }: { history: number[] }) {
   if (!recent.length) return null;
   return (
     <div className="flex items-center gap-1.5 justify-center flex-wrap">
-      <span className="text-[9px] tracking-widest uppercase mr-1" style={{ color: 'rgba(0,212,255,0.4)' }}>
+      <span className="text-[11px] tracking-widest uppercase mr-1 font-semibold" style={{ color: 'rgba(0,212,255,0.4)' }}>
         Recent
       </span>
       {recent.map((n, i) => {
@@ -136,8 +136,9 @@ export default function GameTable({ tableId }: { tableId: string }) {
   useEffect(() => {
     if (phase !== 'betting' || players.length === 0) return;
     const allReady = players.every(p => p.confirmed);
-    if (allReady && isLead()) {
-      triggerSpin();
+    if (allReady) {
+      setCountdown(0); // zero the timer bar for all players immediately
+      if (isLead()) triggerSpin();
     }
   }, [players, phase, isLead, triggerSpin]);
 
@@ -323,7 +324,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
         >
           <div className="text-center">
             <h1 className="text-lg font-black tracking-widest uppercase neon-text">
-              David&apos;s Galactic<br />Casino of Doom
+              David&apos;s Galactic<br />Casino of Ruin
             </h1>
             <p className="text-[10px] mt-1 tracking-widest" style={{ color: 'rgba(0,212,255,0.4)' }}>
               Enter the table
@@ -364,7 +365,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
         </button>
 
         <h1 className="text-sm sm:text-base font-black tracking-widest uppercase neon-text text-center flex-1 px-2">
-          David&apos;s Galactic Casino of Doom
+          David&apos;s Galactic Casino of Ruin
         </h1>
 
         <button
@@ -471,7 +472,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
           <div className="flex flex-col items-center gap-3 w-full max-w-2xl pb-4 shrink-0">
             {/* Balance */}
             <div className="flex items-center gap-3">
-              <span className="text-[10px] tracking-widest uppercase" style={{ color: 'rgba(0,212,255,0.5)' }}>
+              <span className="text-xs tracking-widest uppercase font-semibold" style={{ color: 'rgba(0,212,255,0.5)' }}>
                 Balance
               </span>
               <span className="text-lg font-black neon-text" style={{ fontFamily: 'Courier New, monospace' }}>

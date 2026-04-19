@@ -7,7 +7,7 @@ export default function GameHistory({ history }: { history: number[] }) {
 
   return (
     <div className="rounded-lg neon-border-dim p-3" style={{ background: 'var(--bg-card)' }}>
-      <p className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: 'var(--neon)' }}>
+      <p className="text-xs tracking-widest uppercase mb-2 font-bold" style={{ color: 'var(--neon)' }}>
         History
       </p>
       <div className="flex flex-wrap gap-1.5">
