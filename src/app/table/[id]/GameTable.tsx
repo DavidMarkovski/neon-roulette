@@ -132,15 +132,18 @@ export default function GameTable({ tableId }: { tableId: string }) {
     phaseRef.current = 'spinning';
   }, []);
 
-  // Auto-spin when all players confirmed
+  // Auto-spin when all players confirmed.
+  // Use myConfirmed directly for self (no presence latency) and check others
+  // from presence. This also makes single-player fire immediately on confirm.
   useEffect(() => {
-    if (phase !== 'betting' || players.length === 0) return;
-    const allReady = players.every(p => p.confirmed);
-    if (allReady) {
-      setCountdown(0); // zero the timer bar for all players immediately
+    if (phase !== 'betting' || !myConfirmed) return;
+    const others = players.filter(p => p.id !== playerIdRef.current);
+    const allOthersReady = others.every(p => p.confirmed);
+    if (allOthersReady) {
+      setCountdown(0);
       if (isLead()) triggerSpin();
     }
-  }, [players, phase, isLead, triggerSpin]);
+  }, [players, phase, myConfirmed, isLead, triggerSpin]);
 
   // Countdown timer — resets each round
   useEffect(() => {
@@ -192,11 +195,16 @@ export default function GameTable({ tableId }: { tableId: string }) {
       .on('presence', { event: 'sync' }, updatePlayersFromPresence)
       .on('presence', { event: 'join' }, () => {
         updatePlayersFromPresence();
-        // Re-track our own state so the newly joined player receives our presence
-        // in the next sync event they get (fixes the one-way visibility bug).
+        // Mechanism 1: re-track when a presence join fires so the new player
+        // sees us in their next sync event.
         syncPresence();
       })
       .on('presence', { event: 'leave' }, updatePlayersFromPresence)
+      // Mechanism 2: explicit announce broadcast. A newly joined player sends
+      // this after their track() completes. Existing players re-track so the
+      // joiner gets a fresh sync that includes everyone (handles the race where
+      // presence join fires before the server has propagated existing presences).
+      .on('broadcast', { event: 'announce' }, () => { syncPresence(); })
       .on('broadcast', { event: 'spin_result' }, ({ payload }: { payload: { result: number } }) => {
         handleSpinBroadcast(payload.result);
       })
@@ -217,9 +225,12 @@ export default function GameTable({ tableId }: { tableId: string }) {
             playerName: playerName.current,
             color: colorRef.current,
             bets: [],
-            balance: STARTING_BALANCE,
+            balance: balanceRef.current,
             confirmed: false,
           } satisfies PresenceEntry);
+          // Announce after tracking so existing players re-track for us.
+          // self:false means only other players receive this.
+          await channel.send({ type: 'broadcast', event: 'announce', payload: {} });
         }
       });
 
