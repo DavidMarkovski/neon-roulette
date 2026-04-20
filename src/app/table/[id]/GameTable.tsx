@@ -80,6 +80,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
   const [myConfirmed, setMyConfirmed] = useState(false);
   const [countdown, setCountdown]   = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const channelRef  = useRef<any>(null);
@@ -371,6 +372,12 @@ export default function GameTable({ tableId }: { tableId: string }) {
     ? `${window.location.origin}/table/${tableId}`
     : '';
 
+  function copyShareUrl() {
+    navigator.clipboard.writeText(shareUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   const hasBets = bets.length > 0;
   const otherPlayers = players.filter(p => p.id !== playerIdRef.current);
   const waitingOn = otherPlayers.filter(p => !p.confirmed);
@@ -444,11 +451,15 @@ export default function GameTable({ tableId }: { tableId: string }) {
         </h1>
 
         <button
-          onClick={() => { navigator.clipboard.writeText(shareUrl); }}
+          onClick={copyShareUrl}
           className="text-[10px] px-3 py-1.5 rounded shrink-0 transition-all hover:scale-105"
-          style={{ color: 'var(--neon)', border: '1px solid rgba(0,212,255,0.3)', background: 'rgba(0,212,255,0.04)' }}
+          style={{
+            color: copied ? '#10b981' : 'var(--neon)',
+            border: `1px solid ${copied ? '#10b981' : 'rgba(0,212,255,0.3)'}`,
+            background: copied ? 'rgba(16,185,129,0.08)' : 'rgba(0,212,255,0.04)',
+          }}
         >
-          Share
+          {copied ? '✓ Copied!' : 'Invite'}
         </button>
       </header>
 
@@ -481,6 +492,28 @@ export default function GameTable({ tableId }: { tableId: string }) {
               ✕ Close
             </button>
           )}
+
+          {/* Table invite link */}
+          <div className="rounded-lg p-2.5 flex flex-col gap-1.5" style={{ background: 'rgba(0,212,255,0.04)', border: '1px solid rgba(0,212,255,0.15)' }}>
+            <p className="text-xs font-bold tracking-widest uppercase" style={{ color: 'var(--neon)' }}>
+              Invite Link
+            </p>
+            <p className="text-[10px] break-all leading-relaxed" style={{ color: 'rgba(0,212,255,0.55)', fontFamily: 'Courier New, monospace' }}>
+              {shareUrl}
+            </p>
+            <button
+              onClick={copyShareUrl}
+              className="mt-0.5 py-1.5 text-xs font-bold tracking-widest uppercase rounded transition-all hover:scale-105 active:scale-95"
+              style={{
+                color: copied ? '#10b981' : 'var(--neon)',
+                border: `1px solid ${copied ? '#10b98160' : 'rgba(0,212,255,0.3)'}`,
+                background: copied ? 'rgba(16,185,129,0.08)' : 'rgba(0,212,255,0.06)',
+              }}
+            >
+              {copied ? '✓ Copied!' : 'Copy Link'}
+            </button>
+          </div>
+
           <PlayerPanel players={players} currentPlayerId={playerIdRef.current} />
           <GameHistory history={history} />
         </aside>
