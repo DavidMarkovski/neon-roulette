@@ -16,6 +16,22 @@ import PlayerPanel from '@/components/roulette/PlayerPanel';
 const STARTING_BALANCE = 10000;
 const ROUND_TIMER = 30;
 
+const CASINO_SVG = encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80">' +
+  '<polygon points="40,2 78,40 40,78 2,40" fill="none" stroke="rgb(184,150,12)" stroke-width="0.7" opacity="0.5"/>' +
+  '<polygon points="40,15 65,40 40,65 15,40" fill="none" stroke="rgb(184,150,12)" stroke-width="0.4" opacity="0.25"/>' +
+  '<circle cx="40" cy="40" r="2.5" fill="none" stroke="rgb(184,150,12)" stroke-width="0.5" opacity="0.3"/>' +
+  '<line x1="40" y1="2" x2="40" y2="78" stroke="rgb(184,150,12)" stroke-width="0.2" opacity="0.12"/>' +
+  '<line x1="2" y1="40" x2="78" y2="40" stroke="rgb(184,150,12)" stroke-width="0.2" opacity="0.12"/>' +
+  '</svg>'
+);
+const CASINO_BG = [
+  `url("data:image/svg+xml,${CASINO_SVG}")`,
+  'radial-gradient(ellipse 80% 45% at 50% 0%, rgba(212,170,60,0.08) 0%, transparent 68%)',
+  'radial-gradient(ellipse 30% 70% at 2% 50%, rgba(0,212,255,0.04) 0%, transparent 100%)',
+  'radial-gradient(ellipse 30% 70% at 98% 50%, rgba(0,212,255,0.04) 0%, transparent 100%)',
+].join(', ');
+
 function upsertPlayer(prev: Player[], incoming: Partial<Player> & { id: string }): Player[] {
   const exists = prev.find(p => p.id === incoming.id);
   if (exists) {
@@ -89,6 +105,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
   const confirmedRef = useRef(false);
   const phaseRef    = useRef<GamePhase>('betting');
   const playersRef  = useRef<Player[]>([]);
+  const hadMultiplePlayersRef = useRef(false);
 
   betsRef.current    = bets;
   balanceRef.current = balance;
@@ -125,12 +142,18 @@ export default function GameTable({ tableId }: { tableId: string }) {
     phaseRef.current = 'spinning';
   }, []);
 
+  // Track whether this session ever had 2+ players (for desync guard below)
+  useEffect(() => {
+    if (players.length > 1) hadMultiplePlayersRef.current = true;
+  }, [players]);
+
   // Auto-spin when all players confirmed.
-  // Use myConfirmed directly for self (no presence latency) and check others
-  // from players state. This also makes single-player fire immediately on confirm.
+  // Guard: if we've seen multiple players but others list is now empty, a spurious
+  // presence leave likely fired — don't auto-spin. Heartbeat will re-add the player.
   useEffect(() => {
     if (phase !== 'betting' || !myConfirmed) return;
     const others = players.filter(p => p.id !== playerIdRef.current);
+    if (hadMultiplePlayersRef.current && others.length === 0) return;
     const allOthersReady = others.every(p => p.confirmed);
     if (allOthersReady) {
       setCountdown(0);
@@ -155,6 +178,27 @@ export default function GameTable({ tableId }: { tableId: string }) {
       triggerSpin();
     }
   }, [countdown, phase, isLead, triggerSpin]);
+
+  // Heartbeat — re-broadcasts full state every 4 s so peers can upsert us back
+  // if a spurious presence leave removed us from their players list
+  useEffect(() => {
+    if (!joined) return;
+    const id = setInterval(() => {
+      channelRef.current?.send({
+        type: 'broadcast',
+        event: 'heartbeat',
+        payload: {
+          playerId: playerIdRef.current,
+          playerName: playerName.current,
+          color: colorRef.current,
+          balance: balanceRef.current,
+          bets: betsRef.current,
+          confirmed: confirmedRef.current,
+        },
+      });
+    }, 4000);
+    return () => clearInterval(id);
+  }, [joined]);
 
   // Supabase channel — broadcast-first architecture
   useEffect(() => {
@@ -201,6 +245,17 @@ export default function GameTable({ tableId }: { tableId: string }) {
       })
       .on('broadcast', { event: 'join_ack' }, ({ payload }: { payload: { playerId: string; playerName: string; color: string; balance: number; bets: Bet[]; confirmed: boolean } }) => {
         // Existing player acked our announce — add them to our list
+        setPlayers(prev => upsertPlayer(prev, {
+          id: payload.playerId,
+          name: payload.playerName,
+          color: payload.color,
+          balance: payload.balance,
+          bets: payload.bets,
+          confirmed: payload.confirmed,
+        }));
+      })
+      .on('broadcast', { event: 'heartbeat' }, ({ payload }: { payload: { playerId: string; playerName: string; color: string; balance: number; bets: Bet[]; confirmed: boolean } }) => {
+        // Re-add if spurious presence leave removed this player
         setPlayers(prev => upsertPlayer(prev, {
           id: payload.playerId,
           name: payload.playerName,
@@ -336,7 +391,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
     const newBal = balanceRef.current - lost + won;
     setBalance(newBal);
     balanceRef.current = newBal;
-    setWinAmount(won > 0 ? won - lost : -lost);
+    setWinAmount(currentBets.length === 0 ? null : (won > 0 ? won - lost : -lost));
     setHistory(h => [spinResult, ...h].slice(0, 20));
     setPhase('result');
     phaseRef.current = 'result';
@@ -525,7 +580,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
         )}
 
         {/* Main content */}
-        <main className="flex-1 flex flex-col items-center gap-3 p-3 overflow-y-auto">
+        <main className="flex-1 flex flex-col items-center gap-3 p-3 overflow-y-auto" style={{ backgroundImage: CASINO_BG }}>
           {/* Hot numbers */}
           <HotNumbers history={history} />
 
@@ -617,18 +672,27 @@ export default function GameTable({ tableId }: { tableId: string }) {
                 )}
 
                 {!myConfirmed ? (
-                  <button
-                    onClick={handleConfirm}
-                    disabled={!hasBets}
-                    className={`px-8 py-3 text-base font-black tracking-widest uppercase rounded transition-all hover:scale-105 active:scale-95 disabled:opacity-30 ${hasBets ? 'neon-border neon-glow animate-pulse-neon' : 'neon-border-dim'}`}
-                    style={{ color: 'var(--neon)', background: 'rgba(0,212,255,0.06)' }}
-                  >
-                    {hasBets ? '✓ CONFIRM BETS' : 'Place a Bet'}
-                  </button>
+                  hasBets ? (
+                    <button
+                      onClick={handleConfirm}
+                      className="px-8 py-3 text-base font-black tracking-widest uppercase rounded transition-all hover:scale-105 active:scale-95 neon-border neon-glow animate-pulse-neon"
+                      style={{ color: 'var(--neon)', background: 'rgba(0,212,255,0.06)' }}
+                    >
+                      ✓ CONFIRM BETS
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleConfirm}
+                      className="px-6 py-2.5 text-sm font-bold tracking-widest uppercase rounded transition-all hover:scale-105 active:scale-95"
+                      style={{ color: 'rgba(0,212,255,0.55)', border: '1px solid rgba(0,212,255,0.22)', background: 'rgba(0,212,255,0.04)' }}
+                    >
+                      Sit Out
+                    </button>
+                  )
                 ) : (
                   <div className="text-center">
                     <p className="text-sm font-bold tracking-widest" style={{ color: '#10b981' }}>
-                      ✓ Bets Confirmed
+                      {bets.length === 0 ? '✓ Sitting Out' : '✓ Bets Confirmed'}
                     </p>
                     {waitingOn.length > 0 ? (
                       <p className="text-xs mt-0.5" style={{ color: 'rgba(0,212,255,0.5)' }}>
