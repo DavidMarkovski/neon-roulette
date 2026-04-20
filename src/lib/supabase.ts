@@ -9,8 +9,3 @@ export const supabase = url && key
 
 export const supabaseReady = Boolean(url && key);
 
-export function getTableChannel(tableId: string) {
-  return supabase.channel(`roulette:${tableId}`, {
-    config: { broadcast: { self: true }, presence: { key: '' } },
-  });
-}

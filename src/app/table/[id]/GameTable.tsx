@@ -16,13 +16,18 @@ import PlayerPanel from '@/components/roulette/PlayerPanel';
 const STARTING_BALANCE = 10000;
 const ROUND_TIMER = 30;
 
-interface PresenceEntry {
-  playerId: string;
-  playerName: string;
-  color: string;
-  bets: Bet[];
-  balance: number;
-  confirmed: boolean;
+function upsertPlayer(prev: Player[], incoming: Partial<Player> & { id: string }): Player[] {
+  const exists = prev.find(p => p.id === incoming.id);
+  if (exists) {
+    return prev.map(p => p.id === incoming.id ? { ...p, ...incoming } : p);
+  }
+  const next = [
+    ...prev,
+    { isHost: false, bets: [], balance: STARTING_BALANCE, confirmed: false, ...incoming } as Player,
+  ];
+  return next
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((p, i) => ({ ...p, isHost: i === 0 }));
 }
 
 function HotNumbers({ history }: { history: number[] }) {
@@ -98,19 +103,6 @@ export default function GameTable({ tableId }: { tableId: string }) {
     return sorted[0].id === playerIdRef.current;
   }, []);
 
-  const syncPresence = useCallback(async (patch: Partial<PresenceEntry> = {}) => {
-    if (!channelRef.current) return;
-    await channelRef.current.track({
-      playerId: playerIdRef.current,
-      playerName: playerName.current,
-      color: colorRef.current,
-      bets: betsRef.current,
-      balance: balanceRef.current,
-      confirmed: confirmedRef.current,
-      ...patch,
-    } satisfies PresenceEntry);
-  }, []);
-
   const triggerSpin = useCallback(async () => {
     if (phaseRef.current !== 'betting') return;
     const spinResult = randomResult();
@@ -134,7 +126,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
 
   // Auto-spin when all players confirmed.
   // Use myConfirmed directly for self (no presence latency) and check others
-  // from presence. This also makes single-player fire immediately on confirm.
+  // from players state. This also makes single-player fire immediately on confirm.
   useEffect(() => {
     if (phase !== 'betting' || !myConfirmed) return;
     const others = players.filter(p => p.id !== playerIdRef.current);
@@ -163,79 +155,123 @@ export default function GameTable({ tableId }: { tableId: string }) {
     }
   }, [countdown, phase, isLead, triggerSpin]);
 
-  // Supabase channel
+  // Supabase channel — broadcast-first architecture
   useEffect(() => {
     if (!joined) return;
 
     const channel = supabase.channel(`roulette:${tableId}`, {
-      config: { broadcast: { self: false }, presence: { key: playerIdRef.current } },
+      config: { broadcast: { self: false } },
     });
     channelRef.current = channel;
 
-    // Read the full presence state and update the players list.
-    // Called on every presence event (sync, join, leave) so no changes are missed.
-    function updatePlayersFromPresence() {
-      const state = channel.presenceState<PresenceEntry>();
-      const raw = Object.values(state).flat();
-      const map = new Map<string, PresenceEntry>();
-      for (const e of raw) map.set(e.playerId, e);
-      const unique = [...map.values()].sort((a, b) => a.playerId.localeCompare(b.playerId));
-      setPlayers(unique.map((e, i) => ({
-        id: e.playerId,
-        name: e.playerName,
-        color: e.color,
-        balance: e.balance,
-        bets: e.bets,
-        isHost: i === 0,
-        confirmed: e.confirmed,
-      })));
-    }
-
     channel
-      .on('presence', { event: 'sync' }, updatePlayersFromPresence)
+      // Presence: only for detecting disconnects (identity only)
       .on('presence', { event: 'join' }, () => {
-        updatePlayersFromPresence();
-        // Mechanism 1: re-track when a presence join fires so the new player
-        // sees us in their next sync event.
-        syncPresence();
+        // Do NOT add to players here — wait for join_ack from existing players
       })
-      .on('presence', { event: 'leave' }, updatePlayersFromPresence)
-      // Mechanism 2: explicit announce broadcast. A newly joined player sends
-      // this after their track() completes. Existing players re-track so the
-      // joiner gets a fresh sync that includes everyone (handles the race where
-      // presence join fires before the server has propagated existing presences).
-      .on('broadcast', { event: 'announce' }, () => { syncPresence(); })
+      .on('presence', { event: 'leave' }, ({ leftPresences }: { leftPresences: Array<{ playerId: string }> }) => {
+        const leftIds = leftPresences.map(p => p.playerId);
+        setPlayers(prev => prev.filter(p => !leftIds.includes(p.id)));
+      })
+      // Broadcast: all game state
+      .on('broadcast', { event: 'join_announce' }, ({ payload }: { payload: { playerId: string; playerName: string; color: string; balance: number } }) => {
+        // Someone just joined — add them to our list
+        setPlayers(prev => upsertPlayer(prev, {
+          id: payload.playerId,
+          name: payload.playerName,
+          color: payload.color,
+          balance: payload.balance,
+          bets: [],
+          confirmed: false,
+        }));
+        // Reply with our full current state so the new joiner discovers us
+        channelRef.current?.send({
+          type: 'broadcast',
+          event: 'join_ack',
+          payload: {
+            playerId: playerIdRef.current,
+            playerName: playerName.current,
+            color: colorRef.current,
+            balance: balanceRef.current,
+            bets: betsRef.current,
+            confirmed: confirmedRef.current,
+          },
+        });
+      })
+      .on('broadcast', { event: 'join_ack' }, ({ payload }: { payload: { playerId: string; playerName: string; color: string; balance: number; bets: Bet[]; confirmed: boolean } }) => {
+        // Existing player acked our announce — add them to our list
+        setPlayers(prev => upsertPlayer(prev, {
+          id: payload.playerId,
+          name: payload.playerName,
+          color: payload.color,
+          balance: payload.balance,
+          bets: payload.bets,
+          confirmed: payload.confirmed,
+        }));
+      })
+      .on('broadcast', { event: 'bet_update' }, ({ payload }: { payload: { playerId: string; bets: Bet[] } }) => {
+        setPlayers(prev => prev.map(p =>
+          p.id === payload.playerId ? { ...p, bets: payload.bets } : p
+        ));
+      })
+      .on('broadcast', { event: 'player_confirmed' }, ({ payload }: { payload: { playerId: string } }) => {
+        setPlayers(prev => prev.map(p =>
+          p.id === payload.playerId ? { ...p, confirmed: true } : p
+        ));
+      })
+      .on('broadcast', { event: 'balance_update' }, ({ payload }: { payload: { playerId: string; balance: number } }) => {
+        setPlayers(prev => prev.map(p =>
+          p.id === payload.playerId ? { ...p, balance: payload.balance } : p
+        ));
+      })
       .on('broadcast', { event: 'spin_result' }, ({ payload }: { payload: { result: number } }) => {
         handleSpinBroadcast(payload.result);
       })
       .on('broadcast', { event: 'round_new' }, () => {
         setBets([]);
+        betsRef.current = [];
         setResult(null);
         setWinAmount(null);
         setMyConfirmed(false);
         confirmedRef.current = false;
         setPhase('betting');
         phaseRef.current = 'betting';
-        syncPresence({ bets: [], confirmed: false });
+        // Reset all other players' confirmed and bets
+        setPlayers(prev => prev.map(p => ({ ...p, bets: [], confirmed: false })));
       })
       .subscribe(async (status: string) => {
         if (status === 'SUBSCRIBED') {
+          // Track minimal identity for presence (just enough for leave detection)
           await channel.track({
             playerId: playerIdRef.current,
             playerName: playerName.current,
             color: colorRef.current,
-            bets: [],
+          });
+          // Announce ourselves so existing players can ack back with their state
+          await channel.send({
+            type: 'broadcast',
+            event: 'join_announce',
+            payload: {
+              playerId: playerIdRef.current,
+              playerName: playerName.current,
+              color: colorRef.current,
+              balance: balanceRef.current,
+            },
+          });
+          // Add ourselves to the local players list
+          setPlayers(prev => upsertPlayer(prev, {
+            id: playerIdRef.current,
+            name: playerName.current,
+            color: colorRef.current,
             balance: balanceRef.current,
+            bets: [],
             confirmed: false,
-          } satisfies PresenceEntry);
-          // Announce after tracking so existing players re-track for us.
-          // self:false means only other players receive this.
-          await channel.send({ type: 'broadcast', event: 'announce', payload: {} });
+          }));
         }
       });
 
     return () => { supabase.removeChannel(channel); };
-  }, [joined, tableId, syncPresence, handleSpinBroadcast]);
+  }, [joined, tableId, handleSpinBroadcast]);
 
   function handleJoin(e: React.FormEvent) {
     e.preventDefault();
@@ -260,19 +296,31 @@ export default function GameTable({ tableId }: { tableId: string }) {
     }
     if (totalBetAmount(next) > balanceRef.current) return;
     setBets(next);
-    syncPresence({ bets: next });
+    channelRef.current?.send({
+      type: 'broadcast',
+      event: 'bet_update',
+      payload: { playerId: playerIdRef.current, bets: next },
+    });
   }
 
   function clearBets() {
     if (myConfirmed) return;
     setBets([]);
-    syncPresence({ bets: [] });
+    channelRef.current?.send({
+      type: 'broadcast',
+      event: 'bet_update',
+      payload: { playerId: playerIdRef.current, bets: [] },
+    });
   }
 
   function handleConfirm() {
     setMyConfirmed(true);
     confirmedRef.current = true;
-    syncPresence({ confirmed: true });
+    channelRef.current?.send({
+      type: 'broadcast',
+      event: 'player_confirmed',
+      payload: { playerId: playerIdRef.current },
+    });
   }
 
   function handleSpinComplete(spinResult: number) {
@@ -292,22 +340,30 @@ export default function GameTable({ tableId }: { tableId: string }) {
     setPhase('result');
     phaseRef.current = 'result';
     // Update the players list immediately so PlayerPanel reflects the new balance
-    // without waiting for presence sync to round-trip.
+    // without waiting for broadcast to round-trip.
     setPlayers(prev => prev.map(p =>
       p.id === playerIdRef.current ? { ...p, balance: newBal, bets: [], confirmed: false } : p
     ));
-    syncPresence({ balance: newBal, bets: [], confirmed: false });
+    channelRef.current?.send({
+      type: 'broadcast',
+      event: 'balance_update',
+      payload: { playerId: playerIdRef.current, balance: newBal },
+    });
   }
 
   async function handleNewRound() {
     setBets([]);
+    betsRef.current = [];
     setResult(null);
     setWinAmount(null);
     setMyConfirmed(false);
     confirmedRef.current = false;
     setPhase('betting');
     phaseRef.current = 'betting';
-    syncPresence({ bets: [], confirmed: false });
+    // Reset own entry in players list
+    setPlayers(prev => prev.map(p =>
+      p.id === playerIdRef.current ? { ...p, bets: [], confirmed: false } : p
+    ));
     await channelRef.current?.send({ type: 'broadcast', event: 'round_new', payload: {} });
   }
 
