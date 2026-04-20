@@ -3,12 +3,18 @@
 import type { Player } from '@/lib/types';
 import { totalBetAmount } from '@/lib/game-logic';
 
+interface Reaction {
+  emoji: string;
+  ts: number;
+}
+
 interface Props {
   players: Player[];
   currentPlayerId: string;
+  reactions?: Record<string, Reaction>;
 }
 
-export default function PlayerPanel({ players, currentPlayerId }: Props) {
+export default function PlayerPanel({ players, currentPlayerId, reactions }: Props) {
   return (
     <div className="rounded-lg neon-border-dim p-3 flex flex-col gap-2.5" style={{ background: 'var(--bg-card)' }}>
       <p className="text-xs tracking-widest uppercase font-bold" style={{ color: 'var(--neon)' }}>
@@ -22,8 +28,19 @@ export default function PlayerPanel({ players, currentPlayerId }: Props) {
       {players.map(p => {
         const isSelf = p.id === currentPlayerId;
         const bet = totalBetAmount(p.bets);
+        const rxn = reactions?.[p.id];
         return (
-          <div key={p.id} className="flex items-start gap-2">
+          <div key={p.id} className="flex items-start gap-2 relative">
+            {/* Floating reaction */}
+            {rxn && (
+              <span
+                key={rxn.ts}
+                className="reaction-float absolute -top-1 left-0 text-lg pointer-events-none select-none z-10"
+              >
+                {rxn.emoji}
+              </span>
+            )}
+
             {/* Colour dot */}
             <div
               className="mt-1 w-3 h-3 rounded-full flex-shrink-0"

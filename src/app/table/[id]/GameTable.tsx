@@ -6,6 +6,7 @@ import { supabase, supabaseReady } from '@/lib/supabase';
 import {
   PLAYER_COLORS, randomResult, calculatePayout, totalBetAmount, getNumberColor,
 } from '@/lib/game-logic';
+import { playChipClick, playBallRattle, playWin, playLoss } from '@/lib/sounds';
 import type { Bet, GamePhase, Player } from '@/lib/types';
 import RouletteWheel from '@/components/roulette/RouletteWheel';
 import BettingTable from '@/components/roulette/BettingTable';
@@ -15,6 +16,9 @@ import PlayerPanel from '@/components/roulette/PlayerPanel';
 
 const STARTING_BALANCE = 10000;
 const ROUND_TIMER = 30;
+const REACTIONS = ['🎉', '💀', '🔥', '😤'] as const;
+
+interface Reaction { emoji: string; ts: number; }
 
 const CASINO_SVG = encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80">' +
@@ -46,32 +50,57 @@ function upsertPlayer(prev: Player[], incoming: Partial<Player> & { id: string }
     .map((p, i) => ({ ...p, isHost: i === 0 }));
 }
 
-function HotNumbers({ history }: { history: number[] }) {
-  const recent = history.slice(0, 6);
-  if (!recent.length) return null;
+function NumberDot({ n, glow }: { n: number; glow?: string }) {
+  const col = getNumberColor(n);
+  const baseGlow = col === 'green' ? '#10b981' : col === 'red' ? '#ef4444' : '#334155';
+  const g = glow ?? baseGlow;
   return (
-    <div className="flex items-center gap-1.5 justify-center flex-wrap">
-      <span className="text-[11px] tracking-widest uppercase mr-1 font-semibold" style={{ color: 'rgba(0,212,255,0.4)' }}>
-        Recent
-      </span>
-      {recent.map((n, i) => {
-        const col = getNumberColor(n);
-        return (
-          <div key={i}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-black"
-            style={{
-              background: col === 'green' ? '#064e3b' : col === 'red' ? '#7f1d1d' : '#0f172a',
-              color: col === 'green' ? '#10b981' : col === 'red' ? '#f87171' : '#94a3b8',
-              boxShadow: `0 0 8px ${col === 'green' ? '#10b98150' : col === 'red' ? '#ef444450' : '#33415530'}`,
-              border: `1px solid ${col === 'green' ? '#10b98130' : col === 'red' ? '#ef444430' : '#33415530'}`,
-              fontFamily: 'Courier New, monospace',
-              fontSize: 11,
-            }}
-          >
-            {n}
-          </div>
-        );
-      })}
+    <div
+      className="w-7 h-7 rounded-full flex items-center justify-center font-black"
+      style={{
+        background: col === 'green' ? '#064e3b' : col === 'red' ? '#7f1d1d' : '#0f172a',
+        color: col === 'green' ? '#10b981' : col === 'red' ? '#f87171' : '#94a3b8',
+        boxShadow: `0 0 8px ${g}60`,
+        border: `1px solid ${g}40`,
+        fontFamily: 'Courier New, monospace',
+        fontSize: 11,
+      }}
+    >
+      {n}
+    </div>
+  );
+}
+
+function HotColdNumbers({ history }: { history: number[] }) {
+  if (history.length === 0) return null;
+
+  if (history.length < 5) {
+    return (
+      <div className="flex items-center gap-1.5 justify-center flex-wrap">
+        <span className="text-[11px] tracking-widest uppercase mr-1 font-semibold" style={{ color: 'rgba(0,212,255,0.4)' }}>
+          Recent
+        </span>
+        {history.slice(0, 6).map((n, i) => <NumberDot key={i} n={n} />)}
+      </div>
+    );
+  }
+
+  const freq = new Map<number, number>();
+  history.forEach(n => freq.set(n, (freq.get(n) ?? 0) + 1));
+  const sorted = [...freq.entries()].sort((a, b) => b[1] - a[1]);
+  const hot = sorted.slice(0, 3).map(([n]) => n);
+  const cold = [...sorted].reverse().slice(0, 3).map(([n]) => n);
+
+  return (
+    <div className="flex items-center gap-4 justify-center flex-wrap">
+      <div className="flex items-center gap-1.5">
+        <span className="text-[11px] tracking-widest uppercase font-semibold" style={{ color: '#f87171' }}>HOT</span>
+        {hot.map((n, i) => <NumberDot key={i} n={n} glow="#ef4444" />)}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="text-[11px] tracking-widest uppercase font-semibold" style={{ color: '#60a5fa' }}>COLD</span>
+        {cold.map((n, i) => <NumberDot key={i} n={n} glow="#60a5fa" />)}
+      </div>
     </div>
   );
 }
@@ -84,27 +113,32 @@ export default function GameTable({ tableId }: { tableId: string }) {
   const playerIdRef = useRef<string>(uuid());
   const colorRef    = useRef<string>(PLAYER_COLORS[Math.floor(Math.random() * PLAYER_COLORS.length)]);
 
-  const [balance, setBalance]       = useState(STARTING_BALANCE);
-  const [bets, setBets]             = useState<Bet[]>([]);
+  const [balance, setBalance]           = useState(STARTING_BALANCE);
+  const [bets, setBets]                 = useState<Bet[]>([]);
+  const [lastBets, setLastBets]         = useState<Bet[]>([]);
   const [selectedChip, setSelectedChip] = useState(50);
-  const [phase, setPhase]           = useState<GamePhase>('betting');
-  const [result, setResult]         = useState<number | null>(null);
-  const [history, setHistory]       = useState<number[]>([]);
-  const [players, setPlayers]       = useState<Player[]>([]);
-  const [winAmount, setWinAmount]   = useState<number | null>(null);
-  const [resultKey, setResultKey]   = useState(0);
-  const [myConfirmed, setMyConfirmed] = useState(false);
-  const [countdown, setCountdown]   = useState<number | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [phase, setPhase]               = useState<GamePhase>('betting');
+  const [result, setResult]             = useState<number | null>(null);
+  const [history, setHistory]           = useState<number[]>([]);
+  const [players, setPlayers]           = useState<Player[]>([]);
+  const [winAmount, setWinAmount]       = useState<number | null>(null);
+  const [resultKey, setResultKey]       = useState(0);
+  const [myConfirmed, setMyConfirmed]   = useState(false);
+  const [countdown, setCountdown]       = useState<number | null>(null);
+  const [sidebarOpen, setSidebarOpen]   = useState(false);
+  const [copied, setCopied]             = useState(false);
+  const [reactions, setReactions]       = useState<Record<string, Reaction>>({});
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const channelRef  = useRef<any>(null);
-  const betsRef     = useRef<Bet[]>([]);
-  const balanceRef  = useRef(STARTING_BALANCE);
+  const channelRef   = useRef<any>(null);
+  const betsRef      = useRef<Bet[]>([]);
+  const lastBetsRef  = useRef<Bet[]>([]);
+  const balanceRef   = useRef(STARTING_BALANCE);
   const confirmedRef = useRef(false);
-  const phaseRef    = useRef<GamePhase>('betting');
-  const playersRef  = useRef<Player[]>([]);
+  const phaseRef     = useRef<GamePhase>('betting');
+  const playersRef   = useRef<Player[]>([]);
+  const resultRef    = useRef<number | null>(null);
+  const rattleStopRef = useRef<(() => void) | null>(null);
   const hadMultiplePlayersRef = useRef(false);
 
   betsRef.current    = bets;
@@ -112,8 +146,8 @@ export default function GameTable({ tableId }: { tableId: string }) {
   confirmedRef.current = myConfirmed;
   phaseRef.current   = phase;
   playersRef.current = players;
+  resultRef.current  = result;
 
-  // Smallest ID in the room is the "lead" who triggers spins
   const isLead = useCallback(() => {
     const all = playersRef.current;
     if (!all.length) return true;
@@ -123,6 +157,8 @@ export default function GameTable({ tableId }: { tableId: string }) {
 
   const triggerSpin = useCallback(async () => {
     if (phaseRef.current !== 'betting') return;
+    rattleStopRef.current?.();
+    rattleStopRef.current = playBallRattle();
     const spinResult = randomResult();
     await channelRef.current?.send({
       type: 'broadcast',
@@ -136,20 +172,18 @@ export default function GameTable({ tableId }: { tableId: string }) {
   }, []);
 
   const handleSpinBroadcast = useCallback((spinResult: number) => {
+    rattleStopRef.current?.();
+    rattleStopRef.current = playBallRattle();
     setResult(spinResult);
     setPhase('spinning');
     setResultKey(k => k + 1);
     phaseRef.current = 'spinning';
   }, []);
 
-  // Track whether this session ever had 2+ players (for desync guard below)
   useEffect(() => {
     if (players.length > 1) hadMultiplePlayersRef.current = true;
   }, [players]);
 
-  // Auto-spin when all players confirmed.
-  // Guard: if we've seen multiple players but others list is now empty, a spurious
-  // presence leave likely fired — don't auto-spin. Heartbeat will re-add the player.
   useEffect(() => {
     if (phase !== 'betting' || !myConfirmed) return;
     const others = players.filter(p => p.id !== playerIdRef.current);
@@ -161,7 +195,6 @@ export default function GameTable({ tableId }: { tableId: string }) {
     }
   }, [players, phase, myConfirmed, isLead, triggerSpin]);
 
-  // Countdown timer — resets each round
   useEffect(() => {
     if (!joined || phase !== 'betting') { setCountdown(null); return; }
     setCountdown(ROUND_TIMER);
@@ -179,8 +212,6 @@ export default function GameTable({ tableId }: { tableId: string }) {
     }
   }, [countdown, phase, isLead, triggerSpin]);
 
-  // Heartbeat — re-broadcasts full state every 4 s so peers can upsert us back
-  // if a spurious presence leave removed us from their players list
   useEffect(() => {
     if (!joined) return;
     const id = setInterval(() => {
@@ -200,7 +231,6 @@ export default function GameTable({ tableId }: { tableId: string }) {
     return () => clearInterval(id);
   }, [joined]);
 
-  // Supabase channel — broadcast-first architecture
   useEffect(() => {
     if (!joined) return;
 
@@ -210,17 +240,12 @@ export default function GameTable({ tableId }: { tableId: string }) {
     channelRef.current = channel;
 
     channel
-      // Presence: only for detecting disconnects (identity only)
-      .on('presence', { event: 'join' }, () => {
-        // Do NOT add to players here — wait for join_ack from existing players
-      })
+      .on('presence', { event: 'join' }, () => {})
       .on('presence', { event: 'leave' }, ({ leftPresences }: { leftPresences: Array<{ playerId: string }> }) => {
         const leftIds = leftPresences.map(p => p.playerId);
         setPlayers(prev => prev.filter(p => !leftIds.includes(p.id)));
       })
-      // Broadcast: all game state
       .on('broadcast', { event: 'join_announce' }, ({ payload }: { payload: { playerId: string; playerName: string; color: string; balance: number } }) => {
-        // Someone just joined — add them to our list
         setPlayers(prev => upsertPlayer(prev, {
           id: payload.playerId,
           name: payload.playerName,
@@ -229,7 +254,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
           bets: [],
           confirmed: false,
         }));
-        // Reply with our full current state so the new joiner discovers us
+        // Reply with full state including current phase for desync recovery
         channelRef.current?.send({
           type: 'broadcast',
           event: 'join_ack',
@@ -240,11 +265,17 @@ export default function GameTable({ tableId }: { tableId: string }) {
             balance: balanceRef.current,
             bets: betsRef.current,
             confirmed: confirmedRef.current,
+            phase: phaseRef.current,
+            spinResult: resultRef.current,
           },
         });
       })
-      .on('broadcast', { event: 'join_ack' }, ({ payload }: { payload: { playerId: string; playerName: string; color: string; balance: number; bets: Bet[]; confirmed: boolean } }) => {
-        // Existing player acked our announce — add them to our list
+      .on('broadcast', { event: 'join_ack' }, ({ payload }: {
+        payload: {
+          playerId: string; playerName: string; color: string; balance: number;
+          bets: Bet[]; confirmed: boolean; phase?: GamePhase; spinResult?: number | null;
+        }
+      }) => {
         setPlayers(prev => upsertPlayer(prev, {
           id: payload.playerId,
           name: payload.playerName,
@@ -253,9 +284,18 @@ export default function GameTable({ tableId }: { tableId: string }) {
           bets: payload.bets,
           confirmed: payload.confirmed,
         }));
+        // Desync recovery: catch up if peer is ahead in the round
+        if (phaseRef.current === 'betting') {
+          if (payload.phase === 'spinning' && payload.spinResult != null) {
+            handleSpinBroadcast(payload.spinResult);
+          } else if (payload.phase === 'result' && payload.spinResult != null) {
+            setResult(payload.spinResult);
+            setPhase('result');
+            phaseRef.current = 'result';
+          }
+        }
       })
       .on('broadcast', { event: 'heartbeat' }, ({ payload }: { payload: { playerId: string; playerName: string; color: string; balance: number; bets: Bet[]; confirmed: boolean } }) => {
-        // Re-add if spurious presence leave removed this player
         setPlayers(prev => upsertPlayer(prev, {
           id: payload.playerId,
           name: payload.playerName,
@@ -292,18 +332,29 @@ export default function GameTable({ tableId }: { tableId: string }) {
         confirmedRef.current = false;
         setPhase('betting');
         phaseRef.current = 'betting';
-        // Reset all other players' confirmed and bets
         setPlayers(prev => prev.map(p => ({ ...p, bets: [], confirmed: false })));
+      })
+      .on('broadcast', { event: 'player_reaction' }, ({ payload }: { payload: { playerId: string; emoji: string } }) => {
+        const ts = Date.now();
+        setReactions(prev => ({ ...prev, [payload.playerId]: { emoji: payload.emoji, ts } }));
+        setTimeout(() => {
+          setReactions(prev => {
+            const r = prev[payload.playerId];
+            if (r?.ts === ts) {
+              const { [payload.playerId]: _, ...rest } = prev;
+              return rest;
+            }
+            return prev;
+          });
+        }, 2000);
       })
       .subscribe(async (status: string) => {
         if (status === 'SUBSCRIBED') {
-          // Track minimal identity for presence (just enough for leave detection)
           await channel.track({
             playerId: playerIdRef.current,
             playerName: playerName.current,
             color: colorRef.current,
           });
-          // Announce ourselves so existing players can ack back with their state
           await channel.send({
             type: 'broadcast',
             event: 'join_announce',
@@ -314,7 +365,6 @@ export default function GameTable({ tableId }: { tableId: string }) {
               balance: balanceRef.current,
             },
           });
-          // Add ourselves to the local players list
           setPlayers(prev => upsertPlayer(prev, {
             id: playerIdRef.current,
             name: playerName.current,
@@ -339,6 +389,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
   function handleBet(bet: Bet) {
     if (phase !== 'betting' || myConfirmed) return;
     if (bet.amount > balanceRef.current) return;
+    playChipClick();
     const existing = betsRef.current.findIndex(
       b => b.type === bet.type && b.number === bet.number,
     );
@@ -380,23 +431,33 @@ export default function GameTable({ tableId }: { tableId: string }) {
   }
 
   function handleSpinComplete(spinResult: number) {
-    // Snapshot and immediately clear bets to prevent any double-fire from applying
-    // the payout twice (e.g. if the animation callback somehow fires more than once).
+    rattleStopRef.current?.();
+    rattleStopRef.current = null;
+
     const currentBets = betsRef.current;
     betsRef.current = [];
     setBets([]);
 
+    // Save for Repeat / Double
+    lastBetsRef.current = currentBets;
+    setLastBets(currentBets);
+
     const won  = calculatePayout(currentBets, spinResult);
     const lost = totalBetAmount(currentBets);
     const newBal = balanceRef.current - lost + won;
+    const winAmt = currentBets.length === 0 ? null : (won > 0 ? won - lost : -lost);
+
+    if (currentBets.length > 0) {
+      if (winAmt !== null && winAmt >= 0) playWin();
+      else playLoss();
+    }
+
     setBalance(newBal);
     balanceRef.current = newBal;
-    setWinAmount(currentBets.length === 0 ? null : (won > 0 ? won - lost : -lost));
+    setWinAmount(winAmt);
     setHistory(h => [spinResult, ...h].slice(0, 20));
     setPhase('result');
     phaseRef.current = 'result';
-    // Update the players list immediately so PlayerPanel reflects the new balance
-    // without waiting for broadcast to round-trip.
     setPlayers(prev => prev.map(p =>
       p.id === playerIdRef.current ? { ...p, balance: newBal, bets: [], confirmed: false } : p
     ));
@@ -416,11 +477,60 @@ export default function GameTable({ tableId }: { tableId: string }) {
     confirmedRef.current = false;
     setPhase('betting');
     phaseRef.current = 'betting';
-    // Reset own entry in players list
     setPlayers(prev => prev.map(p =>
       p.id === playerIdRef.current ? { ...p, bets: [], confirmed: false } : p
     ));
     await channelRef.current?.send({ type: 'broadcast', event: 'round_new', payload: {} });
+  }
+
+  async function handleRepeatBets(multiplier: 1 | 2) {
+    const source = lastBetsRef.current;
+    if (!source.length) return;
+    const newBets = source.map(b => ({ ...b, amount: b.amount * multiplier }));
+    if (totalBetAmount(newBets) > balanceRef.current) return;
+
+    // Start new round
+    setBets([]);
+    betsRef.current = [];
+    setResult(null);
+    setWinAmount(null);
+    setMyConfirmed(false);
+    confirmedRef.current = false;
+    setPhase('betting');
+    phaseRef.current = 'betting';
+    setPlayers(prev => prev.map(p =>
+      p.id === playerIdRef.current ? { ...p, bets: [], confirmed: false } : p
+    ));
+    await channelRef.current?.send({ type: 'broadcast', event: 'round_new', payload: {} });
+
+    // Pre-populate with last bets
+    setBets(newBets);
+    betsRef.current = newBets;
+    channelRef.current?.send({
+      type: 'broadcast',
+      event: 'bet_update',
+      payload: { playerId: playerIdRef.current, bets: newBets },
+    });
+  }
+
+  function sendReaction(emoji: string) {
+    const ts = Date.now();
+    setReactions(prev => ({ ...prev, [playerIdRef.current]: { emoji, ts } }));
+    channelRef.current?.send({
+      type: 'broadcast',
+      event: 'player_reaction',
+      payload: { playerId: playerIdRef.current, emoji },
+    });
+    setTimeout(() => {
+      setReactions(prev => {
+        const r = prev[playerIdRef.current];
+        if (r?.ts === ts) {
+          const { [playerIdRef.current]: _, ...rest } = prev;
+          return rest;
+        }
+        return prev;
+      });
+    }, 2000);
   }
 
   const shareUrl = typeof window !== 'undefined'
@@ -436,6 +546,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
   const hasBets = bets.length > 0;
   const otherPlayers = players.filter(p => p.id !== playerIdRef.current);
   const waitingOn = otherPlayers.filter(p => !p.confirmed);
+  const canDouble = lastBets.length > 0 && totalBetAmount(lastBets) * 2 <= balance;
 
   if (!supabaseReady) {
     return (
@@ -533,7 +644,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
       )}
 
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Sidebar — desktop always visible, mobile overlay */}
+        {/* Sidebar */}
         <aside
           className={`
             ${sidebarOpen ? 'flex' : 'hidden'} lg:flex
@@ -548,7 +659,6 @@ export default function GameTable({ tableId }: { tableId: string }) {
             </button>
           )}
 
-          {/* Table invite link */}
           <div className="rounded-lg p-2.5 flex flex-col gap-1.5" style={{ background: 'rgba(0,212,255,0.04)', border: '1px solid rgba(0,212,255,0.15)' }}>
             <p className="text-xs font-bold tracking-widest uppercase" style={{ color: 'var(--neon)' }}>
               Invite Link
@@ -569,7 +679,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
             </button>
           </div>
 
-          <PlayerPanel players={players} currentPlayerId={playerIdRef.current} />
+          <PlayerPanel players={players} currentPlayerId={playerIdRef.current} reactions={reactions} />
           <GameHistory history={history} />
         </aside>
 
@@ -580,12 +690,12 @@ export default function GameTable({ tableId }: { tableId: string }) {
         )}
 
         {/* Main content */}
-        <main className="flex-1 flex flex-col items-center gap-3 p-3 overflow-y-auto" style={{ backgroundImage: CASINO_BG }}>
-          {/* Hot numbers */}
-          <HotNumbers history={history} />
+        <main className="flex-1 flex flex-col items-center gap-3 p-3 overflow-y-auto overflow-x-hidden" style={{ backgroundImage: CASINO_BG }}>
+          {/* Hot/Cold numbers */}
+          <HotColdNumbers history={history} />
 
           {/* Wheel */}
-          <div className="shrink-0" style={{ transform: 'scale(0.85)', transformOrigin: 'top center', marginBottom: -40 }}>
+          <div className="wheel-container shrink-0">
             <RouletteWheel
               key={resultKey}
               result={result}
@@ -628,6 +738,7 @@ export default function GameTable({ tableId }: { tableId: string }) {
               onBet={handleBet}
               disabled={phase !== 'betting' || myConfirmed}
               selectedChip={selectedChip}
+              winResult={phase === 'result' ? result : null}
             />
           </div>
 
@@ -657,6 +768,20 @@ export default function GameTable({ tableId }: { tableId: string }) {
 
             {/* Chip selector */}
             <ChipSelector selected={selectedChip} onSelect={setSelectedChip} balance={balance} />
+
+            {/* Reaction buttons — always visible */}
+            <div className="flex gap-2 justify-center">
+              {REACTIONS.map(emoji => (
+                <button
+                  key={emoji}
+                  onClick={() => sendReaction(emoji)}
+                  className="text-xl w-9 h-9 rounded-lg flex items-center justify-center transition-transform hover:scale-125 active:scale-110"
+                  style={{ background: 'rgba(0,212,255,0.05)', border: '1px solid rgba(0,212,255,0.12)' }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
 
             {/* Betting-phase controls */}
             {phase === 'betting' && (
@@ -710,13 +835,34 @@ export default function GameTable({ tableId }: { tableId: string }) {
 
             {/* Result phase */}
             {phase === 'result' && (
-              <button
-                onClick={handleNewRound}
-                className="px-10 py-3 text-base font-black tracking-widest uppercase rounded neon-border transition-all hover:scale-105 active:scale-95"
-                style={{ color: 'var(--neon)', background: 'rgba(0,212,255,0.06)' }}
-              >
-                New Round ▶
-              </button>
+              <div className="flex flex-col items-center gap-3">
+                {lastBets.length > 0 && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleRepeatBets(1)}
+                      className="px-5 py-2.5 text-sm font-black tracking-widest uppercase rounded transition-all hover:scale-105 active:scale-95"
+                      style={{ color: '#f59e0b', border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.06)' }}
+                    >
+                      ↩ Repeat
+                    </button>
+                    <button
+                      onClick={() => handleRepeatBets(2)}
+                      disabled={!canDouble}
+                      className="px-5 py-2.5 text-sm font-black tracking-widest uppercase rounded transition-all hover:scale-105 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
+                      style={{ color: '#ec4899', border: '1px solid rgba(236,72,153,0.4)', background: 'rgba(236,72,153,0.06)' }}
+                    >
+                      ×2 Double
+                    </button>
+                  </div>
+                )}
+                <button
+                  onClick={handleNewRound}
+                  className="px-10 py-3 text-base font-black tracking-widest uppercase rounded neon-border transition-all hover:scale-105 active:scale-95"
+                  style={{ color: 'var(--neon)', background: 'rgba(0,212,255,0.06)' }}
+                >
+                  New Round ▶
+                </button>
+              </div>
             )}
           </div>
         </main>

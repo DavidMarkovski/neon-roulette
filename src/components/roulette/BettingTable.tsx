@@ -1,7 +1,7 @@
 'use client';
 
 import type { Bet, BetType, Player } from '@/lib/types';
-import { RED_NUMBERS } from '@/lib/game-logic';
+import { RED_NUMBERS, betWins } from '@/lib/game-logic';
 
 interface Props {
   bets: Bet[];
@@ -10,6 +10,7 @@ interface Props {
   onBet: (bet: Bet) => void;
   disabled: boolean;
   selectedChip: number;
+  winResult?: number | null;
 }
 
 function getMyBetAmount(bets: Bet[], type: BetType, number?: number): number {
@@ -23,20 +24,22 @@ function getOtherColors(players: Player[], currentPlayerId: string, type: BetTyp
 }
 
 function Zone({
-  label, type, number, bets, players, currentPlayerId, onBet, disabled, selectedChip,
+  label, type, number, bets, players, currentPlayerId, onBet, disabled, selectedChip, winResult,
   red, green, className = '',
 }: {
   label: string; type: BetType; number?: number;
   bets: Bet[]; players: Player[]; currentPlayerId: string;
   onBet: (b: Bet) => void; disabled: boolean; selectedChip: number;
+  winResult?: number | null;
   red?: boolean; green?: boolean; className?: string;
 }) {
   const amount = getMyBetAmount(bets, type, number);
   const others = getOtherColors(players, currentPlayerId, type, number);
+  const isWinner = winResult != null && betWins({ type, number, amount: 1 }, winResult);
 
   return (
     <div
-      className={`bet-zone relative flex items-center justify-center text-xs font-bold tracking-wide border ${disabled ? 'disabled' : ''} ${className}`}
+      className={`bet-zone relative flex items-center justify-center text-xs font-bold tracking-wide border ${disabled ? 'disabled' : ''} ${isWinner ? 'bet-zone-winner' : ''} ${className}`}
       style={{
         background: green
           ? 'rgba(6,78,59,0.7)'
@@ -79,8 +82,8 @@ function Zone({
   );
 }
 
-export default function BettingTable({ bets, players, currentPlayerId, onBet, disabled, selectedChip }: Props) {
-  const zoneProps = { bets, players, currentPlayerId, onBet, disabled, selectedChip };
+export default function BettingTable({ bets, players, currentPlayerId, onBet, disabled, selectedChip, winResult }: Props) {
+  const zoneProps = { bets, players, currentPlayerId, onBet, disabled, selectedChip, winResult };
 
   return (
     <div
