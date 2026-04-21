@@ -136,3 +136,17 @@ body::before {
     margin-bottom: -72px;
   }
 }
+
+/* Crash game */
+@keyframes pulse-pink {
+  0%,100% { box-shadow: 0 0 12px rgba(236,72,153,0.5), 0 0 25px rgba(236,72,153,0.2); }
+  50%      { box-shadow: 0 0 30px rgba(236,72,153,0.7), 0 0 60px rgba(236,72,153,0.4); }
+}
+.animate-pulse-pink { animation: pulse-pink 1.1s ease-in-out infinite; }
+
+@keyframes crash-flash {
+  0%   { opacity: 1; }
+  15%  { opacity: 0.2; }
+  100% { opacity: 1; }
+}
+.crash-flash { animation: crash-flash 0.5s ease-out forwards; }
